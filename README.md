@@ -9,12 +9,13 @@ Created by **Ankush**. 100% Free, Ad-free, and runs entirely client-side in the 
 ## ✨ Key Features
 
 *   **100% Client-Side Engine:** We load the historical cutoff SQLite database (~30 MB) directly to your browser's WebAssembly memory. Your ranks and data are never sent to external servers or trackers.
-*   **Smart Desirability Index (SDI):** Grouped results are sorted by a dynamic desirability score (out of 120.00) calculated from the normalized base competitiveness of closing ranks and institutional tier premiums (+20 for IIT/IISc, +10 for Tier 1 Elite NITs/IIITs, +5 for standard NITs/IIITs, and 0 for GFTIs).
+*   **Smart Desirability Index (SDI):** Grouped results are sorted by a dynamic desirability score (out of 100.0) calculated from the normalized base competitiveness of closing ranks, spreading scores naturally using a square-root distribution to prevent score clustering.
 *   **Dual-Quota Pooling:** Automatically resolves and selects the best admission quota (Home State vs. Other State) for candidates competing inside their own domicile.
+*   **Pure B.Tech/B.E. Predictions:** Automatically filters out programs requiring JEE Main Paper-2 (B.Arch / B.Planning) or JEE Advanced AAT (IIT Architecture) to focus predictions strictly on standard B.Tech, B.E., and Dual Degree courses.
 *   **Toggleable Prediction Modes:**
     *   **3-Year Weighted (Recommended):** Uses weighted averages: 70% Latest year (2025), 20% Previous (2024), 10% Before (2023).
     *   **Latest Year Only:** Evaluates cutoffs using strictly the latest academic year (2025) data.
-*   **Interactive Live Filters:** Fast client-side fuzzy searches, multi-state location filtering, and institute type tabs (IIT, NIT, IIIT, GFTI).
+*   **Interactive Live Filters:** Fast client-side searches, state location filters, institute type tabs (IIT, NIT, IIIT, GFTI), and probability filters (High, Medium, Low).
 *   **Persistent Wishlist:** Star your target colleges to save them in local storage.
 
 ---
@@ -116,31 +117,28 @@ If you prefer to deploy manually from your terminal:
 
 ## 🧠 Smart Desirability Index (SDI) Algorithm
 
-The Smart Desirability Index (SDI) calculates a dynamic score (out of a maximum of 120.00) that models the student desirability and institutional prestige of each college-branch option.
+The Smart Desirability Index (SDI) calculates a dynamic score (out of 100.0) that models the student desirability of each college-branch option based on the competitiveness of its historical cutoff.
 
 ### Mathematical Formulation
-The index combines the base competitiveness score of the cutoff rank and the prestige premium of the institution:
+The score is calculated purely from the normalized base competitiveness of the latest closing rank:
 
-$$\text{Final\_SDI} = \text{Base\_Score} + \text{Tier\_Premium}$$
+$$\text{SDI} = \left(1 - \sqrt{\frac{\text{closing\_rank}}{\text{Max\_Rank}}}\right) \times 100$$
 
-#### 1. Base Competitiveness Normalization
-To align the different rank scales of JEE Advanced and JEE Main, the latest closing rank is normalized against exam-specific bounds:
+#### 1. Square Root Distribution
+Using a square-root distribution function ensures that ranks are naturally spread out across the 0–100 range. Top-tier programs (very low cutoff ranks) cluster near the high 90s, while normal or lower-tier programs spread smoothly downward all the way to 0, preventing score clustering.
+
+#### 2. Outlier-Filtered Dynamic Normalization
+To prevent data anomalies and rare quota distributions (such as North-Eastern home-state seats with closing ranks exceeding 1,000,000) from squishing the scores of mainstream options, the `Max\_Rank` is dynamically computed from the database rows matching the candidate's category and gender, excluding obvious outliers above safe thresholds:
 *   **JEE Advanced (IITs / IISc):**
-    $$\text{Base\_Score} = \frac{25000 - \text{closing\_rank}}{25000} \times 100$$
-*   **JEE Main (NITs / IIITs / GFTIs):**
-    $$\text{Base\_Score} = \frac{100000 - \text{closing\_rank}}{100000} \times 100$$
+    *   CRL ceiling: 40,000
+    *   Category Rank ceiling: 20,000
+*   **JEE Main (NITs / IIITs / GFTIs / SFTIs):**
+    *   CRL ceiling: 250,000
+    *   Category Rank ceilings: SC (40,000), ST (25,000), EWS (25,000), PwD (8,000), OBC-NCL and others (80,000)
 
-#### 2. Institutional Tier Premium
-Prestige premiums are added to the base score based on the category of the institution:
-*   **IIT / IISc:** $+20$ points
-*   **Elite Tier-1 NIT/IIIT** (Trichy, Surathkal, Warangal, Calicut, Rourkela, Allahabad): $+10$ points
-*   **Standard NIT/IIIT:** $+5$ points
-*   **GFTI:** $+0$ points
-
-#### 3. Sorting & Presentation
-*   **Sorting:** Flat prediction lists are sorted by the raw $\text{Final\_SDI}$ in descending order (highest score first).
-*   **Display:** Visual scores shown on the UI cards are displayed with two-decimal-place precision:
-    $$\text{Visual\_Score} = \text{Final\_SDI.toFixed(2)}$$
+#### 3. Quota & Board Normalization
+*   **Quota Neutral:** SDI uses the most competitive JoSAA cutoff across Home State (HS) and Other State (OS) quotas for that college-branch combination, ensuring regional quota benefits do not artificially lower a seat's desirability score.
+*   **JoSAA Mapping for CSAB:** CSAB options inherit their JoSAA counterpart's desirability score to maintain consistent ranking quality.
 
 ---
 

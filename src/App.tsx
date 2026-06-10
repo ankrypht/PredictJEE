@@ -14,7 +14,10 @@ import {
   ChevronDown,
   Moon,
   Sun,
-  LayoutDashboard
+  LayoutDashboard,
+  Home,
+  Building2,
+  HelpCircle
 } from 'lucide-react';
 import { INSTITUTE_STATE_MAP, type InstituteInfo } from './data/instituteStateMap';
 
@@ -23,7 +26,7 @@ interface CutoffRow {
   counselling_board: 'JoSAA' | 'CSAB';
   institute_id: number;
   institute_name: string;
-  institute_type: 'IIT' | 'NIT' | 'IIIT' | 'GFTI' | 'SFTI';
+  institute_type: 'IIT' | 'NIT' | 'IIIT' | 'GFTI' | 'SFTI' | 'IISc';
   program_id: number;
   program_name: string;
   quota: string;
@@ -43,7 +46,7 @@ interface Prediction extends CutoffRow {
   studentRank: number;
   weightedClosingRank: number;
   delta: number;
-  status: 'Safe' | 'Target' | 'Leap';
+  status: 'High' | 'Medium' | 'Low';
   probValue: number;
   probabilityText: string;
   uniqueKey: string;
@@ -97,8 +100,10 @@ export default function App() {
   const [selectedInstType, setSelectedInstType] = useState<string>('ALL'); // ALL, IIT, NIT, IIIT, GFTI
   const [searchBranch, setSearchBranch] = useState<string>('');
   const [selectedStates, setSelectedStates] = useState<string[]>([]);
+  const [selectedProbs, setSelectedProbs] = useState<('High' | 'Medium' | 'Low')[]>(['High', 'Medium', 'Low']);
   const [showStatesDropdown, setShowStatesDropdown] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'predictions' | 'wishlist'>('predictions');
+  const [activeExamTab, setActiveExamTab] = useState<'advanced' | 'mains'>('mains');
   const [showAll, setShowAll] = useState<boolean>(false);
 
   // Local Wishlist (Persistent in localStorage)
@@ -108,6 +113,306 @@ export default function App() {
   });
 
   const [darkMode, setDarkMode] = useState<boolean>(true);
+
+  // Quota eligibility validator (with support for Home State candidate dual quota pooling)
+  function isQuotaEligible(row: CutoffRow, userHomeState: string): boolean {
+    const instInfo: InstituteInfo | undefined = INSTITUTE_STATE_MAP[row.institute_id];
+    if (!instInfo) return false;
+
+    const instState = instInfo.state;
+    const q = row.quota;
+
+    // All India Quota: always eligible
+    if (q === 'AI' || q === 'All India') return true;
+
+    // Home State Quota: eligible if the candidate's home state matches the college state
+    if (q === 'HS' || q === 'Home State' || q === 'Home State for Goa') {
+      return instState === userHomeState;
+    }
+
+    // Other State Quota: eligible for candidates outside the state, and also
+    // legally eligible for home state candidates competing in the open pool (dual-eligibility)
+    if (q === 'OS' || q === 'Other State') {
+      return true;
+    }
+
+    // Special localized UT quotas
+    if (q === 'GO') return userHomeState === 'Goa';
+    if (q === 'JK' || q === 'Jammu & Kashmir (UT)') return userHomeState === 'Jammu & Kashmir';
+    if (q === 'LA' || q === 'Ladakh (UT)') return userHomeState === 'Ladakh';
+
+    if (q.startsWith('DASA')) return true; // DASA Overseas
+
+    return false;
+  }
+
+  interface QueryInputs {
+    mainCrl: string;
+    mainCategoryRank: string;
+    advCrl: string;
+    advCategoryRank: string;
+    homeState: string;
+    category: string;
+    gender: string;
+    latestYear: number;
+    predictionMode: '3-years' | 'latest-only';
+    queryStart: number;
+  }
+
+  // Process Query Results in Main Thread (offloading SQL execution from UI)
+  function processQueryResults(rawRows: CutoffRow[], inputs: QueryInputs) {
+    const parsedMainCrl = parseInt(inputs.mainCrl, 10);
+    const parsedMainCat = inputs.category !== 'OPEN' ? parseInt(inputs.mainCategoryRank, 10) : null;
+    const parsedAdvCrl = inputs.advCrl ? parseInt(inputs.advCrl, 10) : null;
+    const parsedAdvCat = (inputs.category !== 'OPEN' && inputs.advCategoryRank) ? parseInt(inputs.advCategoryRank, 10) : null;
+
+    // Build a map of the most competitive (lowest) JoSAA closing rank for each program
+    // across all quotas (to use as the objective basis for SDI)
+    const programBestClosingMap = new Map<string, number>();
+    for (const row of rawRows) {
+      if (row.counselling_board === 'JoSAA') {
+        const key = `${row.institute_id}-${row.program_id}-${row.category}-${row.gender}-${row.rank_type}`;
+        const closingVal = Number(row.closing_latest);
+        if (closingVal && !isNaN(closingVal)) {
+          const existing = programBestClosingMap.get(key);
+          if (existing === undefined || closingVal < existing) {
+            programBestClosingMap.set(key, closingVal);
+          }
+        }
+      }
+    }
+
+    // Build a map of JoSAA closing_latest ranks for Mains institutes to use for CSAB rows
+    const josaaClosingMap = new Map<string, number>();
+    for (const row of rawRows) {
+      if (row.counselling_board === 'JoSAA' && row.institute_type !== 'IIT' && row.institute_type !== 'IISc') {
+        const key = `${row.institute_id}-${row.program_id}-${row.quota}-${row.category}-${row.gender}-${row.rank_type}`;
+        if (row.closing_latest !== null && row.closing_latest !== undefined) {
+          josaaClosingMap.set(key, Number(row.closing_latest));
+        }
+      }
+    }
+
+    // Find the max closing ranks dynamically from JoSAA data (and IIT data) for normalization,
+    // but filter out anomalous/extremely high outlier ranks to prevent score squishing.
+    let maxIIT_CRL = 1;
+    let maxIIT_Cat = 1;
+    let maxMain_CRL = 1;
+    let maxMain_Cat = 1;
+
+    for (const row of rawRows) {
+      const closingVal = Number(row.closing_latest);
+      if (!closingVal || isNaN(closingVal)) continue;
+
+      const isAdvanced = row.institute_type === 'IIT' || row.institute_type === 'IISc';
+      if (isAdvanced) {
+        if (row.rank_type === 'CRL') {
+          if (closingVal <= 40000 && closingVal > maxIIT_CRL) {
+            maxIIT_CRL = closingVal;
+          }
+        } else if (row.rank_type === 'Category_Rank') {
+          if (closingVal <= 20000 && closingVal > maxIIT_Cat) {
+            maxIIT_Cat = closingVal;
+          }
+        }
+      } else {
+        if (row.counselling_board === 'JoSAA') {
+          if (row.rank_type === 'CRL') {
+            if (closingVal <= 250000 && closingVal > maxMain_CRL) {
+              maxMain_CRL = closingVal;
+            }
+          } else if (row.rank_type === 'Category_Rank') {
+            let catCeiling = 80000;
+            if (row.category === 'SC') catCeiling = 40000;
+            else if (row.category === 'ST') catCeiling = 25000;
+            else if (row.category === 'EWS') catCeiling = 25000;
+            else if (row.category.includes('PwD')) catCeiling = 8000;
+
+            if (closingVal <= catCeiling && closingVal > maxMain_Cat) {
+              maxMain_Cat = closingVal;
+            }
+          }
+        }
+      }
+    }
+
+    const finalMaxIIT_CRL = maxIIT_CRL > 1 ? maxIIT_CRL : 25000;
+    const finalMaxIIT_Cat = maxIIT_Cat > 1 ? maxIIT_Cat : 10000;
+    const finalMaxMain_CRL = maxMain_CRL > 1 ? maxMain_CRL : 100000;
+    const finalMaxMain_Cat = maxMain_Cat > 1 ? maxMain_Cat : 30000;
+
+    const predictions: Prediction[] = [];
+
+    for (const row of rawRows) {
+      // 1. Quota State Matching
+      if (!isQuotaEligible(row, inputs.homeState)) continue;
+
+      // 2. Strict Exam Routing (IIT Advanced vs Main NIT/IIIT/GFTI)
+      const isIIT = row.institute_type === 'IIT';
+      let studentRank: number | null = null;
+
+      if (isIIT) {
+        if (parsedAdvCrl === null) continue; // Exclude IIT if no Advanced CRL entered
+        
+        if (row.rank_type === 'CRL') {
+          studentRank = parsedAdvCrl;
+        } else if (row.rank_type === 'Category_Rank') {
+          if (parsedAdvCat === null) continue; // Exclude reserved IIT if Advanced Category Rank is missing
+          studentRank = parsedAdvCat;
+        }
+      } else {
+        if (row.rank_type === 'CRL') {
+          studentRank = parsedMainCrl;
+        } else if (row.rank_type === 'Category_Rank') {
+          if (parsedMainCat === null) continue;
+          studentRank = parsedMainCat;
+        }
+      }
+
+      if (studentRank === null || isNaN(studentRank) || studentRank <= 0) continue;
+
+      // 3. Compute closing rank / weighted closing rank (WCR)
+      const cLatest = row.closing_latest;
+      const cPrev = row.closing_prev;
+      const cBefore = row.closing_before;
+
+      // EXCLUSION FILTER: Must have data in the latest academic year to filter discontinued branches
+      if (cLatest === null || cLatest === undefined) continue;
+
+      const wcr = (() => {
+        if (inputs.predictionMode === 'latest-only') {
+          return cLatest;
+        } else {
+          // Weights: Latest (70%), Prev (20%), Before (10%) normalized if gaps exist (e.g. new programs)
+          const wLatest = 0.7;
+          const wPrev = 0.2;
+          const wBefore = 0.1;
+          let totalW = 0;
+          if (cLatest !== null) totalW += wLatest;
+          if (cPrev !== null) totalW += wPrev;
+          if (cBefore !== null) totalW += wBefore;
+
+          if (totalW === 0) return 0;
+
+          const nwLatest = cLatest !== null ? wLatest / totalW : 0;
+          const nwPrev = cPrev !== null ? wPrev / totalW : 0;
+          const nwBefore = cBefore !== null ? wBefore / totalW : 0;
+
+          return Math.round(
+            nwLatest * (cLatest || 0) +
+            nwPrev * (cPrev || 0) +
+            nwBefore * (cBefore || 0)
+          );
+        }
+      })();
+
+      if (wcr === 0) continue;
+
+      // 4. Mathematical Percentage-based Boundary Buffers (10% buffer)
+      if (studentRank > wcr * 1.10) continue;
+
+      // Delta percentage calculation
+      const delta = (studentRank - wcr) / wcr;
+      
+      const { status, probValue, probabilityText } = (() => {
+        if (delta <= -0.05) {
+          const val = Math.min(99, Math.round(85 + (Math.abs(delta) * 100)));
+          return { status: 'High' as const, probValue: val, probabilityText: 'High Probability' };
+        } else if (delta <= 0.02) {
+          const val = Math.round(50 + ((0.02 - delta) / 0.07) * 35);
+          return { status: 'Medium' as const, probValue: val, probabilityText: 'Medium Probability' };
+        } else {
+          const val = Math.max(5, Math.round(10 + ((0.10 - delta) / 0.08) * 40));
+          return { status: 'Low' as const, probValue: val, probabilityText: 'Low Probability' };
+        }
+      })();
+
+      const uniqueKey = `${row.counselling_board}-${row.institute_id}-${row.program_id}-${row.quota}-${row.category}-${row.gender}-${row.rank_type}`;
+
+      // Calculate a dynamic 'Smart Desirability Index' (SDI) score on the frontend using only the latest year's data
+      const isAdvanced = isIIT || row.institute_type === 'IISc';
+      
+      // Determine the closing rank to use for SDI calculation
+      let closingLatestForSDI = Number(row.closing_latest) || 0;
+      if (row.counselling_board === 'CSAB') {
+        const key = `${row.institute_id}-${row.program_id}-${row.quota}-${row.category}-${row.gender}-${row.rank_type}`;
+        const josaaClosing = josaaClosingMap.get(key);
+        if (josaaClosing !== undefined) {
+          closingLatestForSDI = josaaClosing;
+        }
+      }
+
+      // Apply objective quota normalization (use lowest/most competitive JoSAA rank for HS/OS comparison)
+      const objectiveKey = `${row.institute_id}-${row.program_id}-${row.category}-${row.gender}-${row.rank_type}`;
+      const bestClosingVal = programBestClosingMap.get(objectiveKey);
+      if (bestClosingVal !== undefined) {
+        closingLatestForSDI = bestClosingVal;
+      }
+
+      // Step A (Base Competitiveness Normalization using square root ratio for natural spread)
+      const baseScore = (() => {
+        if (isAdvanced) {
+          const maxRank = row.rank_type === 'Category_Rank' ? finalMaxIIT_Cat : finalMaxIIT_CRL;
+          const ratio = Math.min(1, Math.max(0, closingLatestForSDI / maxRank));
+          return (1 - Math.sqrt(ratio)) * 100;
+        } else {
+          const maxRank = row.rank_type === 'Category_Rank' ? finalMaxMain_Cat : finalMaxMain_CRL;
+          const ratio = Math.min(1, Math.max(0, closingLatestForSDI / maxRank));
+          return (1 - Math.sqrt(ratio)) * 100;
+        }
+      })();
+
+      // Final_SDI is purely the base score now (no tier premium)
+      const finalSdi = baseScore;
+
+      predictions.push({
+        ...row,
+        studentRank,
+        weightedClosingRank: wcr,
+        delta,
+        status,
+        probValue,
+        probabilityText,
+        uniqueKey,
+        sdi: finalSdi,
+        finalSdi
+      });
+    }
+
+    // 5. Best Pathway Deduplication & Home State Dual-Quota Selection
+    // If a candidate matches both HS and OS quotas, or OPEN and Category seats,
+    // we choose the seat quota and category offering the higher admission probability (higher probValue)
+    const bestQuotaMap = new Map<string, Prediction>();
+    for (const pred of predictions) {
+      const groupKey = `${pred.counselling_board}-${pred.institute_id}-${pred.program_id}-${pred.gender}`;
+      const existing = bestQuotaMap.get(groupKey);
+      if (!existing) {
+        bestQuotaMap.set(groupKey, pred);
+      } else {
+        // Keep the one with the higher probability (higher probValue)
+        if (pred.probValue > existing.probValue) {
+          bestQuotaMap.set(groupKey, pred);
+        }
+      }
+    }
+    const finalPredictions = Array.from(bestQuotaMap.values());
+
+    // Sort by Smart Desirability Index (SDI) DESC using raw, un-clamped Final_SDI
+    finalPredictions.sort((a, b) => b.finalSdi - a.finalSdi);
+
+    setAllPredictions(finalPredictions);
+    setHasPredicted(true);
+    setIsQuerying(false);
+    setQueryTimeMs(Math.round(performance.now() - inputs.queryStart));
+    
+    // Auto-select active exam tab based on rank inputs
+    if (inputs.advCrl) {
+      setActiveExamTab('advanced');
+    } else {
+      setActiveExamTab('mains');
+    }
+    setActiveTab('predictions');
+  }
 
   // Sync wishlist to localStorage
   useEffect(() => {
@@ -125,8 +430,9 @@ export default function App() {
 
   // Reset showAll when query results or filters change
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setShowAll(false);
-  }, [allPredictions, activeTab, selectedInstType, selectedStates, searchBranch]);
+  }, [allPredictions, activeTab, selectedInstType, selectedStates, searchBranch, selectedProbs]);
 
   // Load and configure Web Worker
   useEffect(() => {
@@ -162,6 +468,7 @@ export default function App() {
     return () => {
       worker.terminate();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Determine if category is reserved
@@ -174,37 +481,7 @@ export default function App() {
     );
   };
 
-  // Quota eligibility validator (with support for Home State candidate dual quota pooling)
-  const isQuotaEligible = (row: any, userHomeState: string): boolean => {
-    const instInfo: InstituteInfo | undefined = INSTITUTE_STATE_MAP[row.institute_id];
-    if (!instInfo) return false;
 
-    const instState = instInfo.state;
-    const q = row.quota;
-
-    // All India Quota: always eligible
-    if (q === 'AI' || q === 'All India') return true;
-
-    // Home State Quota: eligible if the candidate's home state matches the college state
-    if (q === 'HS' || q === 'Home State' || q === 'Home State for Goa') {
-      return instState === userHomeState;
-    }
-
-    // Other State Quota: eligible for candidates outside the state, and also
-    // legally eligible for home state candidates competing in the open pool (dual-eligibility)
-    if (q === 'OS' || q === 'Other State') {
-      return true;
-    }
-
-    // Special localized UT quotas
-    if (q === 'GO') return userHomeState === 'Goa';
-    if (q === 'JK' || q === 'Jammu & Kashmir (UT)') return userHomeState === 'Jammu & Kashmir';
-    if (q === 'LA' || q === 'Ladakh (UT)') return userHomeState === 'Ladakh';
-
-    if (q.startsWith('DASA')) return true; // DASA Overseas
-
-    return false;
-  };
 
   // Trigger Off-Thread Prediction Query
   const handlePredict = (e?: React.FormEvent) => {
@@ -267,6 +544,9 @@ export default function App() {
         AND (c.category = 'OPEN' OR c.category = :category)
         -- Normal seat allocations
         AND c.quota IN ('AI', 'All India', 'HS', 'Home State', 'OS', 'Other State', 'GO', 'JK', 'LA', 'Jammu & Kashmir (UT)', 'Ladakh (UT)')
+        -- Exclude B.Arch (AAT / Paper-2) and B.Planning (Paper-2) programs
+        AND p.name NOT LIKE '%Bachelor of Architecture%'
+        AND p.name NOT LIKE '%Bachelor of Planning%'
       GROUP BY c.counselling_board, c.institute_id, c.program_id, c.quota, c.category, c.gender, c.rank_type
     `;
 
@@ -299,193 +579,23 @@ export default function App() {
     if (hasPredicted && dbLoaded && workerRef.current) {
       handlePredict();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [predictionMode]);
 
-  // Process Query Results in Main Thread (offloading SQL execution from UI)
-  const processQueryResults = (rawRows: any[], inputs: any) => {
-    const parsedMainCrl = parseInt(inputs.mainCrl, 10);
-    const parsedMainCat = inputs.category !== 'OPEN' ? parseInt(inputs.mainCategoryRank, 10) : null;
-    const parsedAdvCrl = inputs.advCrl ? parseInt(inputs.advCrl, 10) : null;
-    const parsedAdvCat = (inputs.category !== 'OPEN' && inputs.advCategoryRank) ? parseInt(inputs.advCategoryRank, 10) : null;
 
-    const predictions: Prediction[] = [];
-
-    for (const row of rawRows) {
-      // 1. Quota State Matching
-      if (!isQuotaEligible(row, inputs.homeState)) continue;
-
-      // 2. Strict Exam Routing (IIT Advanced vs Main NIT/IIIT/GFTI)
-      const isIIT = row.institute_type === 'IIT';
-      let studentRank: number | null = null;
-
-      if (isIIT) {
-        if (parsedAdvCrl === null) continue; // Exclude IIT if no Advanced CRL entered
-        
-        if (row.rank_type === 'CRL') {
-          studentRank = parsedAdvCrl;
-        } else if (row.rank_type === 'Category_Rank') {
-          if (parsedAdvCat === null) continue; // Exclude reserved IIT if Advanced Category Rank is missing
-          studentRank = parsedAdvCat;
-        }
-      } else {
-        if (row.rank_type === 'CRL') {
-          studentRank = parsedMainCrl;
-        } else if (row.rank_type === 'Category_Rank') {
-          if (parsedMainCat === null) continue;
-          studentRank = parsedMainCat;
-        }
-      }
-
-      if (studentRank === null || isNaN(studentRank) || studentRank <= 0) continue;
-
-      // 3. Compute closing rank / weighted closing rank (WCR)
-      const cLatest = row.closing_latest;
-      const cPrev = row.closing_prev;
-      const cBefore = row.closing_before;
-
-      // EXCLUSION FILTER: Must have data in the latest academic year to filter discontinued branches
-      if (cLatest === null || cLatest === undefined) continue;
-
-      let wcr = 0;
-      if (inputs.predictionMode === 'latest-only') {
-        wcr = cLatest;
-      } else {
-        // Weights: Latest (70%), Prev (20%), Before (10%) normalized if gaps exist (e.g. new programs)
-        let wLatest = 0.7, wPrev = 0.2, wBefore = 0.1;
-        let totalW = 0;
-        if (cLatest !== null) totalW += wLatest;
-        if (cPrev !== null) totalW += wPrev;
-        if (cBefore !== null) totalW += wBefore;
-
-        if (totalW === 0) continue;
-
-        const nwLatest = cLatest !== null ? wLatest / totalW : 0;
-        const nwPrev = cPrev !== null ? wPrev / totalW : 0;
-        const nwBefore = cBefore !== null ? wBefore / totalW : 0;
-
-        wcr = Math.round(
-          nwLatest * (cLatest || 0) +
-          nwPrev * (cPrev || 0) +
-          nwBefore * (cBefore || 0)
-        );
-      }
-
-      // 4. Mathematical Percentage-based Boundary Buffers (10% buffer)
-      if (studentRank > wcr * 1.10) continue;
-
-      // Delta percentage calculation
-      const delta = (studentRank - wcr) / wcr;
-      let status: 'Safe' | 'Target' | 'Leap' = 'Safe';
-      let probabilityText = '';
-      let probValue = 0;
-
-      if (delta <= -0.05) {
-        status = 'Safe';
-        probValue = Math.min(99, Math.round(85 + (Math.abs(delta) * 100)));
-        probabilityText = 'High Chance';
-      } else if (delta <= 0.02) {
-        status = 'Target';
-        probValue = Math.round(50 + ((0.02 - delta) / 0.07) * 35);
-        probabilityText = 'Moderate Chance';
-      } else {
-        status = 'Leap';
-        probValue = Math.max(5, Math.round(10 + ((0.10 - delta) / 0.08) * 40));
-        probabilityText = 'Low Chance / Leap';
-      }
-
-      const uniqueKey = `${row.counselling_board}-${row.institute_id}-${row.program_id}-${row.quota}-${row.category}-${row.gender}-${row.rank_type}`;
-
-      // Step 1: Calculate a dynamic 'Smart Desirability Index' (SDI) score on the frontend using only the latest year's data
-      const isAdvanced = isIIT || row.institute_type === 'IISc';
-      const closingLatest = Number(row.closing_latest) || 0;
-      
-      // Step A (Base Competitiveness Normalization)
-      let baseScore = 0;
-      if (isAdvanced) {
-        baseScore = ((25000 - closingLatest) / 25000) * 100;
-      } else {
-        baseScore = ((100000 - closingLatest) / 100000) * 100;
-      }
-
-      // Step B (Institutional Tier Premium)
-      let tierPremium = 0;
-      if (isAdvanced) {
-        tierPremium = 20;
-      } else {
-        const instNameLower = row.institute_name.toLowerCase();
-        const isTier1Elite = 
-          instNameLower.includes('tiruchirappalli') ||
-          instNameLower.includes('trichy') ||
-          instNameLower.includes('surathkal') ||
-          instNameLower.includes('warangal') ||
-          instNameLower.includes('calicut') ||
-          instNameLower.includes('rourkela') ||
-          instNameLower.includes('allahabad');
-
-        if (isTier1Elite) {
-          tierPremium = 10;
-        } else if (row.institute_type === 'NIT' || row.institute_type === 'IIIT') {
-          tierPremium = 5;
-        } else {
-          tierPremium = 0;
-        }
-      }
-
-      // Combine the scores: Final_SDI = Base_Score + Tier_Premium
-      const finalSdi = baseScore + tierPremium;
-
-      if (predictions.length < 5) {
-        console.log(`SDI Debug: ${row.institute_name} - ${row.program_name}`);
-        console.log(`  Closing Latest: ${closingLatest}`);
-        console.log(`  Base: ${baseScore.toFixed(2)}, Tier: ${tierPremium}`);
-        console.log(`  Final: ${finalSdi.toFixed(2)}`);
-      }
-
-      predictions.push({
-        ...row,
-        studentRank,
-        weightedClosingRank: wcr,
-        delta,
-        status,
-        probValue,
-        probabilityText,
-        uniqueKey,
-        sdi: finalSdi,
-        finalSdi
-      });
-    }
-
-    // 5. Home State Dual-Quota Selection
-    // If a candidate matches both HS and OS quotas for the same college+branch in their home state,
-    // we choose the seat quota offering the higher admission probability (higher probValue)
-    const bestQuotaMap = new Map<string, Prediction>();
-    for (const pred of predictions) {
-      const groupKey = `${pred.counselling_board}-${pred.institute_id}-${pred.program_id}-${pred.category}-${pred.gender}-${pred.rank_type}`;
-      const existing = bestQuotaMap.get(groupKey);
-      if (!existing) {
-        bestQuotaMap.set(groupKey, pred);
-      } else {
-        // Keep the one with the higher probability (higher probValue)
-        if (pred.probValue > existing.probValue) {
-          bestQuotaMap.set(groupKey, pred);
-        }
-      }
-    }
-    const finalPredictions = Array.from(bestQuotaMap.values());
-
-    // Sort by Smart Desirability Index (SDI) DESC using raw, un-clamped Final_SDI
-    finalPredictions.sort((a, b) => b.finalSdi - a.finalSdi);
-
-    setAllPredictions(finalPredictions);
-    setHasPredicted(true);
-    setIsQuerying(false);
-    setQueryTimeMs(Math.round(performance.now() - inputs.queryStart));
-    setActiveTab('predictions');
-  };
 
   // Filter & Search predictions in memory (instantaneous interactive filters)
   const filteredPredictions = useMemo(() => {
     let list = allPredictions;
+
+    // Filter by Active Exam Tab if Advanced rank is provided
+    if (advCrl) {
+      if (activeExamTab === 'advanced') {
+        list = list.filter(p => p.institute_type === 'IIT' || p.institute_type === 'IISc');
+      } else {
+        list = list.filter(p => p.institute_type !== 'IIT' && p.institute_type !== 'IISc');
+      }
+    }
 
     // Starred Wishlist tab
     if (activeTab === 'wishlist') {
@@ -505,6 +615,9 @@ export default function App() {
       });
     }
 
+    // Filter by probability status
+    list = list.filter(p => selectedProbs.includes(p.status));
+
     // Fuzzy branch text search
     if (searchBranch.trim()) {
       const q = searchBranch.toLowerCase();
@@ -515,11 +628,27 @@ export default function App() {
     }
 
     return list;
-  }, [allPredictions, activeTab, selectedInstType, selectedStates, searchBranch, wishlist]);
+  }, [allPredictions, activeTab, selectedInstType, selectedStates, searchBranch, wishlist, activeExamTab, advCrl, selectedProbs]);
+
+  const advancedPredictionsCount = activeTab === 'wishlist' 
+    ? allPredictions.filter(p => (p.institute_type === 'IIT' || p.institute_type === 'IISc') && wishlist.includes(p.uniqueKey)).length
+    : allPredictions.filter(p => p.institute_type === 'IIT' || p.institute_type === 'IISc').length;
+
+  const mainsPredictionsCount = activeTab === 'wishlist'
+    ? allPredictions.filter(p => p.institute_type !== 'IIT' && p.institute_type !== 'IISc' && wishlist.includes(p.uniqueKey)).length
+    : allPredictions.filter(p => p.institute_type !== 'IIT' && p.institute_type !== 'IISc').length;
 
   const handleStateSelect = (state: string) => {
     setSelectedStates(prev => 
       prev.includes(state) ? prev.filter(s => s !== state) : [...prev, state]
+    );
+  };
+
+  const toggleProbabilityFilter = (prob: 'High' | 'Medium' | 'Low') => {
+    setSelectedProbs(prev => 
+      prev.includes(prob) 
+        ? prev.filter(p => p !== prob) 
+        : [...prev, prob]
     );
   };
 
@@ -886,6 +1015,42 @@ export default function App() {
                     </span>
                   </div>
 
+                  {/* Exam Switcher Tab Slider */}
+                  {advCrl && (
+                    <div className="grid grid-cols-2 gap-2 p-1 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 animate-fadeIn">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveExamTab('advanced');
+                          setSelectedInstType('ALL');
+                        }}
+                        className={`py-2 px-3 rounded-lg text-xs font-bold transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1.5 ${
+                          activeExamTab === 'advanced'
+                            ? 'bg-white dark:bg-slate-800 text-brand-605 text-indigo-600 dark:text-indigo-400 shadow-sm border border-slate-200/20 dark:border-slate-700/50'
+                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                        }`}
+                      >
+                        <GraduationCap className="h-4 w-4" />
+                        <span>JEE Advanced (IITs) ({advancedPredictionsCount})</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveExamTab('mains');
+                          setSelectedInstType('ALL');
+                        }}
+                        className={`py-2 px-3 rounded-lg text-xs font-bold transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1.5 ${
+                          activeExamTab === 'mains'
+                            ? 'bg-white dark:bg-slate-800 text-brand-605 text-indigo-600 dark:text-indigo-400 shadow-sm border border-slate-200/20 dark:border-slate-700/50'
+                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                        }`}
+                      >
+                        <Building2 className="h-3.5 w-3.5" />
+                        <span>JEE Main (NITs/IIITs/GFTIs) ({mainsPredictionsCount})</span>
+                      </button>
+                    </div>
+                  )}
+
                   {/* Filter controls */}
                   <div className="flex flex-col md:flex-row gap-3">
                     {/* Search Field */}
@@ -957,20 +1122,65 @@ export default function App() {
                   </div>
 
                   {/* Institute Type Pill Tabs */}
-                  <div className="flex flex-wrap gap-1.5">
-                    {['ALL', 'IIT', 'NIT', 'IIIT', 'GFTI'].map(type => (
-                      <button
-                        key={type}
-                        onClick={() => setSelectedInstType(type)}
-                        className={`px-2.5 sm:px-4 py-1 sm:py-1.5 rounded-xl text-[10px] sm:text-xs font-bold border transition ${
-                          selectedInstType === type 
-                            ? 'bg-brand-500 border-brand-500 text-white shadow-md shadow-brand-500/15' 
-                            : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-400'
-                        }`}
-                      >
-                        {type === 'ALL' ? 'All Institutes' : `${type}s`}
-                      </button>
-                    ))}
+                  {(!advCrl || activeExamTab === 'mains') && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {['ALL', 'NIT', 'IIIT', 'GFTI'].map(type => (
+                        <button
+                          key={type}
+                          onClick={() => setSelectedInstType(type)}
+                          className={`px-2.5 sm:px-4 py-1 sm:py-1.5 rounded-xl text-[10px] sm:text-xs font-bold border transition ${
+                            selectedInstType === type 
+                              ? 'bg-brand-500 border-brand-500 text-white shadow-md shadow-brand-500/15' 
+                              : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-400'
+                          }`}
+                        >
+                          {type === 'ALL' ? 'All Institutes' : `${type}s`}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Probability Filter Pill Tabs */}
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 pt-1">
+                    <span className="text-[10px] sm:text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mr-1 sm:mr-1.5 select-none">
+                      Probability:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => toggleProbabilityFilter('High')}
+                      className={`px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-xl text-[10px] sm:text-xs font-bold border flex items-center space-x-1.5 transition duration-150 cursor-pointer ${
+                        selectedProbs.includes('High')
+                          ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400 shadow-sm font-extrabold'
+                          : 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500 bg-transparent hover:text-slate-500 dark:hover:text-slate-400'
+                      }`}
+                    >
+                      <CheckCircle2 className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                      <span>High</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleProbabilityFilter('Medium')}
+                      className={`px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-xl text-[10px] sm:text-xs font-bold border flex items-center space-x-1.5 transition duration-150 cursor-pointer ${
+                        selectedProbs.includes('Medium')
+                          ? 'bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400 shadow-sm font-extrabold'
+                          : 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500 bg-transparent hover:text-slate-500 dark:hover:text-slate-400'
+                      }`}
+                    >
+                      <Info className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                      <span>Medium</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleProbabilityFilter('Low')}
+                      className={`px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-xl text-[10px] sm:text-xs font-bold border flex items-center space-x-1.5 transition duration-150 cursor-pointer ${
+                        selectedProbs.includes('Low')
+                          ? 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-400 shadow-sm font-extrabold'
+                          : 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500 bg-transparent hover:text-slate-500 dark:hover:text-slate-400'
+                      }`}
+                    >
+                      <Flame className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                      <span>Low</span>
+                    </button>
                   </div>
 
                 </div>
@@ -1038,30 +1248,53 @@ export default function App() {
                         <div className="flex justify-between items-start gap-2">
                           {/* Probability Indicator Badge */}
                           <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                            {pred.status === 'Safe' && (
+                            {pred.status === 'High' && (
                               <span className="inline-flex items-center text-[10px] sm:text-xs font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg">
                                 <CheckCircle2 className="h-3 w-3 sm:h-3.5 sm:w-3.5 mr-1" />
-                                Safe ({pred.probValue}%)
+                                High Probability ({pred.probValue}%)
                               </span>
                             )}
-                            {pred.status === 'Target' && (
+                            {pred.status === 'Medium' && (
                               <span className="inline-flex items-center text-[10px] sm:text-xs font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg">
                                 <Info className="h-3 w-3 sm:h-3.5 sm:w-3.5 mr-1" />
-                                Target ({pred.probValue}%)
+                                Medium Probability ({pred.probValue}%)
                               </span>
                             )}
-                            {pred.status === 'Leap' && (
+                            {pred.status === 'Low' && (
                               <span className="inline-flex items-center text-[10px] sm:text-xs font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg">
                                 <Flame className="h-3 w-3 sm:h-3.5 sm:w-3.5 mr-1" />
-                                Leap ({pred.probValue}%)
+                                Low Probability ({pred.probValue}%)
                               </span>
                             )}
                             <span className="text-[10px] text-slate-400 font-semibold bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 px-2 py-0.5 rounded-md">
                               WCR: {pred.weightedClosingRank}
                             </span>
-                            <span className="inline-flex items-center text-[10px] sm:text-xs font-bold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-lg">
-                              Desirability Score: {pred.sdi.toFixed(2)}/120
-                            </span>
+                             <div className="relative group inline-flex items-center">
+                              <span className="inline-flex items-center text-[10px] sm:text-xs font-bold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-lg">
+                                {pred.institute_type === 'IIT' || pred.institute_type === 'IISc' ? 'IIT Desirability' : 'Mains Desirability'}: {pred.sdi.toFixed(1)}/100
+                                <HelpCircle className="h-3 w-3 ml-1.5 text-indigo-500 group-hover:text-indigo-600 dark:text-indigo-400 cursor-pointer" />
+                              </span>
+                              
+                              {/* Hover Tooltip Box */}
+                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-slate-950 dark:bg-slate-900 text-white text-[10px] rounded-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-205 z-50 shadow-xl border border-slate-800 pointer-events-none">
+                                <div className="font-bold border-b border-slate-800 pb-1 mb-1.5 text-[11px] text-indigo-400">
+                                  Dynamic Desirability Score
+                                </div>
+                                <div className="space-y-1.5 leading-relaxed text-slate-300 font-medium">
+                                  <div>Normalized purely out of 100 from the latest year's JoSAA/IIT data:</div>
+                                  <div className="font-mono bg-slate-900 dark:bg-slate-950 p-1.5 rounded text-center text-indigo-300 text-[10px] font-semibold border border-slate-800">
+                                    Score = (1 - sqrt(Cutoff / Max)) * 100
+                                  </div>
+                                  <div>
+                                    • <strong className="text-slate-200">Quota Neutral</strong>: Calculated using the best cutoff across HS & OS quotas so regional benefits don't lower the college's prestige.
+                                  </div>
+                                  <div>
+                                    • <strong className="text-slate-200">Category Calibrated</strong>: Normalized against category-specific maximum closing ranks, ensuring proper score distribution.
+                                  </div>
+                                </div>
+                                <div className="w-2.5 h-2.5 bg-slate-950 dark:bg-slate-900 border-r border-b border-slate-800 absolute top-full left-1/2 -translate-x-1/2 -translate-y-1.5 rotate-45"></div>
+                              </div>
+                            </div>
                           </div>
 
                           {/* Wishlist Star */}
@@ -1105,9 +1338,16 @@ export default function App() {
                           </span>
 
                           {/* Quota */}
-                          <span className="text-[10px] font-bold bg-teal-100 text-teal-700 dark:bg-teal-950/40 dark:text-teal-400 border border-teal-200 dark:border-teal-900/40 px-2 py-0.5 rounded">
-                            {pred.quota} Quota ({instState})
-                          </span>
+                          {pred.quota === 'HS' || pred.quota === 'Home State' || pred.quota === 'Home State for Goa' ? (
+                            <span className="inline-flex items-center text-[10px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/40 px-2 py-0.5 rounded">
+                              <Home className="h-3 w-3 mr-1" />
+                              Home State Quota ({instState})
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold bg-teal-100 text-teal-700 dark:bg-teal-950/40 dark:text-teal-400 border border-teal-200 dark:border-teal-900/40 px-2 py-0.5 rounded">
+                              {pred.quota} Quota ({instState})
+                            </span>
+                          )}
 
                           {/* Category */}
                           <span className="text-[10px] font-bold bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-400 border border-violet-200 dark:border-violet-900/40 px-2 py-0.5 rounded">
@@ -1197,7 +1437,7 @@ export default function App() {
               <div className="max-w-md space-y-1">
                 <span className="font-bold text-slate-700 dark:text-slate-300">What is SDI (Smart Desirability Index)?</span>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-normal">
-                  A desirability score (out of 120) calculated using normalized base competitiveness (derived from JEE Advanced or JEE Main closing ranks) and institutional tier premiums (+20 for IIT/IISc, +10 for Tier 1 Elite NITs/IIITs, +5 for standard NITs/IIITs, and 0 for GFTIs). Ranks are sorted in descending order of this combined index to prioritize competitive and prestigious options.
+                  A desirability score (out of 100) calculated using normalized base competitiveness derived from JEE Advanced (for IITs) or JoSAA closing ranks (for Mains). The scale is dynamically determined by category-specific max closing ranks to prevent score squishing. Quotas are objective-normalized to keep scores consistent. Ranks are sorted in descending order of this index to prioritize the most competitive options.
                 </p>
               </div>
             </div>

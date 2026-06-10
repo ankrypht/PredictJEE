@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // Web Worker for off-thread SQLite WebAssembly execution
 let db: any = null;
 
