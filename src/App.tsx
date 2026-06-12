@@ -436,7 +436,7 @@ export default function App() {
               ) : !hasPredicted ? (
                 // Dashboard Welcome State
                 <div className="flex-1 border border-dashed border-slate-200 dark:border-slate-800 rounded-3xl flex flex-col items-center justify-center p-6 sm:p-8 text-center space-y-4 bg-white/40 dark:bg-slate-900/10 backdrop-blur-sm">
-                  <div className="p-3.5 sm:p-4 bg-indigo-500/10 text-indigo-400 rounded-2xl">
+                  <div className="p-3.5 sm:p-4 bg-brand-500/10 text-brand-400 rounded-2xl">
                     <BookOpen className="h-7 w-7 sm:h-8 sm:w-8 text-brand-500" />
                   </div>
                   <div className="max-w-md space-y-2">
@@ -489,7 +489,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => setShowAll(true)}
-                        className="px-6 py-2.5 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 rounded-xl font-bold text-xs hover:bg-indigo-600/20 active:scale-98 transition duration-200 cursor-pointer"
+                        className="px-6 py-2.5 bg-brand-500/10 text-brand-600 dark:text-brand-400 border border-brand-500/20 rounded-xl font-bold text-xs hover:bg-brand-500/20 active:scale-98 transition duration-200 cursor-pointer"
                       >
                         Show All {filteredPredictions.length} Choices
                       </button>

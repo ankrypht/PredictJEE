@@ -23,7 +23,7 @@ export const Footer: React.FC<FooterProps> = ({ latestYear }) => {
           </div>
         </div>
         <p className="font-medium text-slate-500 dark:text-slate-400 pt-2">
-          Created by <span className="font-bold text-indigo-600 dark:text-indigo-400">Ankush</span> &bull; 100% Free &amp; Ad-free College Predictor
+          Created by <span className="font-bold text-brand-600 dark:text-brand-400">Ankush</span> &bull; 100% Free &amp; Ad-free College Predictor
         </p>
       </div>
     </footer>

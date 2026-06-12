@@ -22,7 +22,7 @@ export const DbLoader: React.FC<DbLoaderProps> = ({ dbProgress }) => {
         <div className="space-y-2">
           <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
             <div 
-              className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-300"
+              className="h-full bg-gradient-to-r from-brand-600 to-amber-500 transition-all duration-300"
               style={{ width: `${dbProgress}%` }}
             ></div>
           </div>

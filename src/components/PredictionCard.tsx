@@ -55,10 +55,10 @@ export const PredictionCard: React.FC<PredictionCardProps> = ({
             WCR: {pred.weightedClosingRank}
           </span>
           <div className="relative group inline-flex items-center">
-            <span className="inline-flex items-center text-[10px] sm:text-xs font-bold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-lg">
+            <span className="inline-flex items-center text-[10px] sm:text-xs font-bold bg-brand-500/10 text-brand-600 dark:text-brand-400 border border-brand-500/20 px-2.5 py-1 rounded-lg">
               {pred.institute_type === 'IIT' || pred.institute_type === 'IISc' ? 'IIT Desirability' : 'Mains Desirability'}: {pred.sdi.toFixed(1)}/100
               <HelpCircle
-                className="h-3 w-3 ml-1.5 text-indigo-500 group-hover:text-indigo-600 dark:text-indigo-400 cursor-pointer"
+                className="h-3 w-3 ml-1.5 text-brand-500 group-hover:text-brand-600 dark:text-brand-400 cursor-pointer"
                 onClick={(e) => {
                   e.stopPropagation();
                   setActiveTooltipKey(activeTooltipKey === pred.uniqueKey ? null : pred.uniqueKey);
@@ -72,12 +72,12 @@ export const PredictionCard: React.FC<PredictionCardProps> = ({
                 ? 'opacity-100 visible pointer-events-auto'
                 : 'opacity-0 invisible sm:group-hover:opacity-100 sm:group-hover:visible pointer-events-none'
             }`}>
-              <div className="font-bold border-b border-slate-800 pb-1 mb-1.5 text-[11px] text-indigo-400">
+              <div className="font-bold border-b border-slate-800 pb-1 mb-1.5 text-[11px] text-brand-400">
                 Desirability Score
               </div>
               <div className="space-y-1.5 leading-relaxed text-slate-300 font-medium">
                 <div>An objective desirability rating (out of 100) calculated from the latest year's JoSAA OPEN category CRL cutoff for the branch:</div>
-                <div className="font-mono bg-slate-900 dark:bg-slate-950 p-1.5 rounded text-center text-indigo-300 text-[10px] font-semibold border border-slate-800">
+                <div className="font-mono bg-slate-900 dark:bg-slate-950 p-1.5 rounded text-center text-brand-300 text-[10px] font-semibold border border-slate-800">
                   Score = (1 - sqrt(OPEN_CRL / Max_OPEN_CRL)) * 100
                 </div>
                 <div>
@@ -128,9 +128,9 @@ export const PredictionCard: React.FC<PredictionCardProps> = ({
 
         {/* Institute Type */}
         <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-          pred.institute_type === 'IIT' 
-            ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-900/40' 
-            : 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-400 border border-orange-200 dark:border-orange-900/40'
+          pred.institute_type === 'IIT' || pred.institute_type === 'IISc'
+            ? 'bg-brand-500/10 text-brand-600 dark:text-brand-400 border border-brand-500/20' 
+            : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
         }`}>
           {pred.institute_type}
         </span>
