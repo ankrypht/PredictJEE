@@ -42,8 +42,10 @@ The Desirability Score evaluates the student demand and demand-based prestige of
 The score is calculated from the normalized base competitiveness of the JoSAA OPEN category CRL closing rank of the branch:
 
 $$
-\text{Desirability Score} = \left(1 - \sqrt{\frac{\text{OPEN\_CRL}}{\text{Max\_OPEN\_CRL}}}\right) \times 100
+\text{Desirability Score} = \left(1 - \sqrt{\frac{R}{R_{\max}}}\right) \times 100
 $$
+
+where $R$ is the OPEN category CRL closing rank of the branch, and $R_{\max}$ is the dynamic maximum OPEN CRL ceiling.
 
 #### 1. Square Root Distribution
 A square-root distribution ensures that ranks are naturally spread out across the 0–100 scale. Top-tier programs (very low cutoff ranks) cluster near the high 90s, while normal or lower-tier programs spread smoothly downward all the way to 0, preventing score clustering.
