@@ -1,147 +1,73 @@
 # 🎯 JEE College Predictor
 
-A high-performance, single-page web application to predict candidate admission options for **IITs**, **NITs**, **IIITs**, and **GFTIs** based on historical JoSAA/CSAB counselling cutoffs (2023–2025). 
+A high-performance, client-side web application to predict admission choices for **IITs**, **NITs**, **IIITs**, and **GFTIs** based on historical JoSAA/CSAB counselling rounds. 
 
-Created by **Ankush**. 100% Free, Ad-free, and runs entirely client-side in the browser.
+🚀 **[Live App: ankrypht.github.io/PredictJEE](https://ankrypht.github.io/PredictJEE/)**
+
+---
+
+<div align="center">
+
+[![Website](https://img.shields.io/badge/Website-GitHub%20Pages-4F46E5?style=for-the-badge&logo=github)](https://ankrypht.github.io/PredictJEE/)
+
+[![React 19](https://img.shields.io/badge/React-19.0-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev/)
+[![TypeScript 6](https://img.shields.io/badge/TypeScript-6.0-3178C6?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
+[![Vite 8](https://img.shields.io/badge/Vite-8.0-646CFF?style=flat-square&logo=vite)](https://vite.dev/)
+[![SQLite WebAssembly](https://img.shields.io/badge/Database-SQLite%20Wasm-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://sqlite.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-success?style=flat-square)](https://opensource.org/licenses/MIT)
+
+</div>
 
 ---
 
 ## ✨ Key Features
 
-*   **100% Client-Side Engine:** We load the historical cutoff SQLite database (~30 MB) directly to your browser's WebAssembly memory. Your ranks and data are never sent to external servers or trackers.
-*   **Smart Desirability Index (SDI):** Grouped results are sorted by a dynamic desirability score (out of 100.0) calculated from the normalized base competitiveness of closing ranks, spreading scores naturally using a square-root distribution to prevent score clustering.
-*   **Dual-Quota Pooling:** Automatically resolves and selects the best admission quota (Home State vs. Other State) for candidates competing inside their own domicile.
+*   **100% Client-Side Engine:** Downloads the historical cutoff database (~30 MB SQLite) directly to WebAssembly memory inside your browser. Ranks, selections, and personal data are never sent to external servers.
+*   **Desirability Score:** Predictive options are sorted by an objective desirability rating (out of 100.0) calculated from normalized JoSAA OPEN category CRL closing ranks. Spreads scores naturally using a square-root distribution to prevent clustering.
+*   **Dual-Quota Domicile Pooling:** Automatically resolves and selects the best admission quota (Home State vs. Other State) for candidates competing inside their own domicile, maximizing admission probability.
 *   **Pure B.Tech/B.E. Predictions:** Automatically filters out programs requiring JEE Main Paper-2 (B.Arch / B.Planning) or JEE Advanced AAT (IIT Architecture) to focus predictions strictly on standard B.Tech, B.E., and Dual Degree courses.
 *   **Toggleable Prediction Modes:**
-    *   **3-Year Weighted (Recommended):** Uses weighted averages: 70% Latest year (2025), 20% Previous (2024), 10% Before (2023).
+    *   **3-Year Weighted (Recommended):** Evaluates cutoffs using weighted averages: 70% Latest year (2025), 20% Previous (2024), 10% Before (2023).
     *   **Latest Year Only:** Evaluates cutoffs using strictly the latest academic year (2025) data.
-*   **Interactive Live Filters:** Fast client-side searches, state location filters, institute type tabs (IIT, NIT, IIIT, GFTI), and probability filters (High, Medium, Low).
-*   **Persistent Wishlist:** Star your target colleges to save them in local storage.
+*   **Interactive Live Filters:** Instant client-side fuzzy search, location-based state filtering, institute type tabs (IIT, NIT, IIIT, GFTI), and probability level filters (High, Medium, Low).
+*   **Persistent Wishlist:** Star target choices to save them in local storage.
 
 ---
 
-## 🛠️ Technical Stack
+## 🧠 Desirability Score Algorithm
 
-*   **Core:** React 19 + TypeScript + Vite
-*   **Styling:** Tailwind CSS v4 + Lucide Icons + Google Fonts (Inter, Outfit)
-*   **Database Engine:** SQL.js (SQLite compiled to WebAssembly via CDN)
-*   **Concurrence:** Off-thread database queries executed in a background Web Worker (`src/db.worker.ts`) to ensure the user interface remains completely smooth during scanning.
-
----
-
-## 💻 Local Development Setup
-
-To run the application locally:
-
-1.  **Clone the Repository:**
-    ```bash
-    git clone https://github.com/your-username/your-repository-name.git
-    cd your-repository-name
-    ```
-
-2.  **Install Dependencies:**
-    ```bash
-    npm install
-    ```
-
-3.  **Run Development Server:**
-    ```bash
-    npm run dev
-    ```
-    This spins up a local Vite server, typically at `http://localhost:5173/`.
-
-4.  **Production Compilation:**
-    ```bash
-    npm run build
-    ```
-    Build files will be generated inside the `/dist` directory.
-
----
-
-## 🚀 How to Publish on GitHub Pages
-
-Because the app is fully static and runs SQLite locally in the browser, it is perfectly suited for **GitHub Pages** with zero backend hosting costs.
-
-There are two main methods to deploy the application:
-
-### Method A: Automated Deployment via GitHub Actions (Recommended)
-
-We have pre-configured a workflow file at `.github/workflows/deploy.yml` that builds and deploys your site automatically whenever you push code to GitHub.
-
-1.  **Create a New GitHub Repository:**
-    Initialize a blank repository on GitHub (do not add a README, license, or gitignore; use your local ones).
-2.  **Link and Push Your Code:**
-    ```bash
-    git init
-    git add .
-    git commit -m "Initial commit with deployment config"
-    git branch -M main
-    git remote add origin https://github.com/your-username/your-repository-name.git
-    git push -u origin main
-    ```
-3.  **Enable GitHub Actions Permissions:**
-    - Go to your repository on GitHub.
-    - Click **Settings** ➔ **Actions** ➔ **General**.
-    - Scroll down to **Workflow permissions**, select **Read and write permissions**, and click **Save**.
-4.  **Configure GitHub Pages Source:**
-    - Go to **Settings** ➔ **Pages**.
-    - Under **Build and deployment** ➔ **Source**, select **Deploy from a branch**.
-    - Under **Branch**, select **gh-pages** (which is automatically created by the Action) and `/ (root)`, then click **Save**.
-    - Your site will be online at `https://your-username.github.io/your-repository-name/` in a few minutes!
-
----
-
-### Method B: Manual Deployment via `gh-pages` Package
-
-If you prefer to deploy manually from your terminal:
-
-1.  **Install the Deployment Package:**
-    ```bash
-    npm install -D gh-pages
-    ```
-2.  **Update `package.json` Scripts:**
-    Add these two keys inside the `"scripts"` object:
-    ```json
-    "predeploy": "npm run build",
-    "deploy": "gh-pages -d dist"
-    ```
-3.  **Run the Deployment Command:**
-    ```bash
-    npm run deploy
-    ```
-    This automatically builds the project and pushes the `/dist` bundle contents to the `gh-pages` branch on GitHub.
-4.  **Configure Source on GitHub:**
-    Follow Step 4 in Method A.
-
----
-
-## 🧠 Smart Desirability Index (SDI) Algorithm
-
-The Smart Desirability Index (SDI) calculates a dynamic score (out of 100.0) that models the student desirability of each college-branch option based on the competitiveness of its historical cutoff.
+The Desirability Score evaluates the student demand and demand-based prestige of each college-branch combination based on the competitiveness of its historical JoSAA OPEN category CRL cutoff.
 
 ### Mathematical Formulation
-The score is calculated purely from the normalized base competitiveness of the latest closing rank:
+The score is calculated from the normalized base competitiveness of the JoSAA OPEN category CRL closing rank of the branch:
 
-$$\text{SDI} = \left(1 - \sqrt{\frac{\text{closing\_rank}}{\text{Max\_Rank}}}\right) \times 100$$
+$$
+\text{Desirability Score} = \left(1 - \sqrt{\frac{\text{OPEN\_CRL}}{\text{Max\_OPEN\_CRL}}}\right) \times 100
+$$
 
 #### 1. Square Root Distribution
-Using a square-root distribution function ensures that ranks are naturally spread out across the 0–100 range. Top-tier programs (very low cutoff ranks) cluster near the high 90s, while normal or lower-tier programs spread smoothly downward all the way to 0, preventing score clustering.
+A square-root distribution ensures that ranks are naturally spread out across the 0–100 scale. Top-tier programs (very low cutoff ranks) cluster near the high 90s, while normal or lower-tier programs spread smoothly downward all the way to 0, preventing score clustering.
 
 #### 2. Outlier-Filtered Dynamic Normalization
-To prevent data anomalies and rare quota distributions (such as North-Eastern home-state seats with closing ranks exceeding 1,000,000) from squishing the scores of mainstream options, the `Max\_Rank` is dynamically computed from the database rows matching the candidate's category and gender, excluding obvious outliers above safe thresholds:
-*   **JEE Advanced (IITs / IISc):**
-    *   CRL ceiling: 40,000
-    *   Category Rank ceiling: 20,000
-*   **JEE Main (NITs / IIITs / GFTIs / SFTIs):**
-    *   CRL ceiling: 250,000
-    *   Category Rank ceilings: SC (40,000), ST (25,000), EWS (25,000), PwD (8,000), OBC-NCL and others (80,000)
+To prevent data anomalies and rare quota distributions (such as North-Eastern home-state seats with closing ranks exceeding 1,000,000) from squishing the scores of mainstream options, the `Max_OPEN_CRL` is dynamically computed from the JoSAA `OPEN` CRL rows, excluding obvious outliers above safe thresholds:
+*   **JEE Advanced (IITs / IISc):** CRL ceiling of 40,000
+*   **JEE Main (NITs / IIITs / GFTIs / SFTIs):** CRL ceiling of 250,000
 
-#### 3. Quota & Board Normalization
-*   **Quota Neutral:** SDI uses the most competitive JoSAA cutoff across Home State (HS) and Other State (OS) quotas for that college-branch combination, ensuring regional quota benefits do not artificially lower a seat's desirability score.
+#### 3. Category & Quota Normalization
+*   **Category Agnostic:** All category seats of a given branch inherit the exact same desirability score computed from the branch's OPEN category CRL cutoff. This ensures consistent sorting so the actual best seats (e.g. IIT Bombay Computer Science) rank at the top regardless of whether they are accessed via CRL or Category Rank pathways.
+*   **Quota Neutral:** The Desirability Score uses the most competitive JoSAA cutoff across Home State and Other State quotas for that college-branch combination, ensuring regional quota benefits do not artificially lower a seat's score.
 *   **JoSAA Mapping for CSAB:** CSAB options inherit their JoSAA counterpart's desirability score to maintain consistent ranking quality.
+
+---
+
+## 🛠️ System Architecture
+
+*   **UI Layer:** React 19 single page application styled with Tailwind CSS v4, utilizing responsive glassmorphism designs for mobile-friendly rendering.
+*   **Worker Layer:** A Web Worker executes the SQL statements off-thread.
+*   **Database Layer:** SQL.js loads the compressed SQLite database (`cutoffs.db`) from standard HTTP byte chunks into memory. All queries run in sub-10ms.
 
 ---
 
 ## ⚖️ Disclaimers & Licensing
 
-All cutoffs are indicative parameters based on JoSAA/CSAB historical counselling rounds. Actual cutoffs may vary. Read the full terms of use on our [Terms Page](public/terms.html).
+All cutoffs are indicative parameters based on JoSAA/CSAB historical counselling rounds. Actual cutoffs may vary. Open sourced under the **MIT License**.

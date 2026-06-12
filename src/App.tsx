@@ -81,10 +81,10 @@ export default function App() {
 
   // Form Inputs
   const [homeState, setHomeState] = useState<string>('');
-  const [predictionMode, setPredictionMode] = useState<'3-years' | 'latest-only'>('3-years');
-  const [category, setCategory] = useState<string>('OPEN');
+  const [predictionMode, setPredictionMode] = useState<'3-years' | 'latest-only' | ''>('');
+  const [category, setCategory] = useState<string>('');
   const [agreeTerms, setAgreeTerms] = useState<boolean>(false);
-  const [gender, setGender] = useState<string>('Gender-Neutral');
+  const [gender, setGender] = useState<string>('');
   
   const [mainCrl, setMainCrl] = useState<string>('');
   const [mainCategoryRank, setMainCategoryRank] = useState<string>('');
@@ -105,6 +105,17 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'predictions' | 'wishlist'>('predictions');
   const [activeExamTab, setActiveExamTab] = useState<'advanced' | 'mains'>('mains');
   const [showAll, setShowAll] = useState<boolean>(false);
+  const [activeTooltipKey, setActiveTooltipKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleDocumentClick = () => {
+      setActiveTooltipKey(null);
+    };
+    document.addEventListener('click', handleDocumentClick);
+    return () => {
+      document.removeEventListener('click', handleDocumentClick);
+    };
+  }, []);
 
   // Local Wishlist (Persistent in localStorage)
   const [wishlist, setWishlist] = useState<string[]>(() => {
@@ -137,7 +148,7 @@ export default function App() {
     }
 
     // Special localized UT quotas
-    if (q === 'GO') return userHomeState === 'Goa';
+    if (q === 'GO' || q === 'Goa') return userHomeState === 'Goa';
     if (q === 'JK' || q === 'Jammu & Kashmir (UT)') return userHomeState === 'Jammu & Kashmir';
     if (q === 'LA' || q === 'Ladakh (UT)') return userHomeState === 'Ladakh';
 
@@ -193,12 +204,27 @@ export default function App() {
       }
     }
 
+    // Build a map of the most competitive (lowest) JoSAA OPEN CRL closing rank for each branch and gender
+    // across all quotas (to serve as the objective, category-agnostic basis for SDI)
+    const branchOpenCRLMap = new Map<string, number>();
+    for (const row of rawRows) {
+      if (row.counselling_board === 'JoSAA' && row.category === 'OPEN' && row.rank_type === 'CRL') {
+        const key = `${row.institute_id}-${row.program_id}-${row.gender}`;
+        const closingVal = Number(row.closing_latest);
+        if (closingVal && !isNaN(closingVal)) {
+          const existing = branchOpenCRLMap.get(key);
+          if (existing === undefined || closingVal < existing) {
+            branchOpenCRLMap.set(key, closingVal);
+          }
+        }
+      }
+    }
+
     // Find the max closing ranks dynamically from JoSAA data (and IIT data) for normalization,
     // but filter out anomalous/extremely high outlier ranks to prevent score squishing.
+    // Since SDI is calculated using only the OPEN CRL ranks, we only need CRL max ranks.
     let maxIIT_CRL = 1;
-    let maxIIT_Cat = 1;
     let maxMain_CRL = 1;
-    let maxMain_Cat = 1;
 
     for (const row of rawRows) {
       const closingVal = Number(row.closing_latest);
@@ -210,10 +236,6 @@ export default function App() {
           if (closingVal <= 40000 && closingVal > maxIIT_CRL) {
             maxIIT_CRL = closingVal;
           }
-        } else if (row.rank_type === 'Category_Rank') {
-          if (closingVal <= 20000 && closingVal > maxIIT_Cat) {
-            maxIIT_Cat = closingVal;
-          }
         }
       } else {
         if (row.counselling_board === 'JoSAA') {
@@ -221,25 +243,13 @@ export default function App() {
             if (closingVal <= 250000 && closingVal > maxMain_CRL) {
               maxMain_CRL = closingVal;
             }
-          } else if (row.rank_type === 'Category_Rank') {
-            let catCeiling = 80000;
-            if (row.category === 'SC') catCeiling = 40000;
-            else if (row.category === 'ST') catCeiling = 25000;
-            else if (row.category === 'EWS') catCeiling = 25000;
-            else if (row.category.includes('PwD')) catCeiling = 8000;
-
-            if (closingVal <= catCeiling && closingVal > maxMain_Cat) {
-              maxMain_Cat = closingVal;
-            }
           }
         }
       }
     }
 
     const finalMaxIIT_CRL = maxIIT_CRL > 1 ? maxIIT_CRL : 25000;
-    const finalMaxIIT_Cat = maxIIT_Cat > 1 ? maxIIT_Cat : 10000;
     const finalMaxMain_CRL = maxMain_CRL > 1 ? maxMain_CRL : 100000;
-    const finalMaxMain_Cat = maxMain_Cat > 1 ? maxMain_Cat : 30000;
 
     const predictions: Prediction[] = [];
 
@@ -332,32 +342,44 @@ export default function App() {
       // Calculate a dynamic 'Smart Desirability Index' (SDI) score on the frontend using only the latest year's data
       const isAdvanced = isIIT || row.institute_type === 'IISc';
       
-      // Determine the closing rank to use for SDI calculation
-      let closingLatestForSDI = Number(row.closing_latest) || 0;
-      if (row.counselling_board === 'CSAB') {
-        const key = `${row.institute_id}-${row.program_id}-${row.quota}-${row.category}-${row.gender}-${row.rank_type}`;
-        const josaaClosing = josaaClosingMap.get(key);
-        if (josaaClosing !== undefined) {
-          closingLatestForSDI = josaaClosing;
+      // Determine the JoSAA OPEN CRL rank for this branch (institute_id + program_id) to use as the sole basis for SDI
+      let sdiRank = 0;
+      
+      const openKeyWithGender = `${row.institute_id}-${row.program_id}-${row.gender}`;
+      const openKeyGenderNeutral = `${row.institute_id}-${row.program_id}-Gender-Neutral`;
+      
+      const openRank = branchOpenCRLMap.get(openKeyWithGender) ?? branchOpenCRLMap.get(openKeyGenderNeutral);
+      
+      if (openRank !== undefined) {
+        sdiRank = openRank;
+      } else {
+        // Fallback: If no JoSAA OPEN CRL row is found (extremely rare), calculate the baseline closing rank for this row
+        let fallbackClosing = Number(row.closing_latest) || 0;
+        if (row.counselling_board === 'CSAB') {
+          // Keep JoSAA alignment for CSAB fallback
+          const josaaKey = `${row.institute_id}-${row.program_id}-${row.quota}-${row.category}-${row.gender}-${row.rank_type}`;
+          const josaaClosing = josaaClosingMap.get(josaaKey);
+          if (josaaClosing !== undefined) {
+            fallbackClosing = josaaClosing;
+          }
         }
-      }
-
-      // Apply objective quota normalization (use lowest/most competitive JoSAA rank for HS/OS comparison)
-      const objectiveKey = `${row.institute_id}-${row.program_id}-${row.category}-${row.gender}-${row.rank_type}`;
-      const bestClosingVal = programBestClosingMap.get(objectiveKey);
-      if (bestClosingVal !== undefined) {
-        closingLatestForSDI = bestClosingVal;
+        
+        // Quota normalization fallback
+        const objectiveKey = `${row.institute_id}-${row.program_id}-${row.category}-${row.gender}-${row.rank_type}`;
+        const bestClosingVal = programBestClosingMap.get(objectiveKey);
+        sdiRank = bestClosingVal !== undefined ? bestClosingVal : fallbackClosing;
       }
 
       // Step A (Base Competitiveness Normalization using square root ratio for natural spread)
+      // Since sdiRank represents the OPEN CRL rank, we always normalize it against the CRL max rank.
       const baseScore = (() => {
         if (isAdvanced) {
-          const maxRank = row.rank_type === 'Category_Rank' ? finalMaxIIT_Cat : finalMaxIIT_CRL;
-          const ratio = Math.min(1, Math.max(0, closingLatestForSDI / maxRank));
+          const maxRank = finalMaxIIT_CRL;
+          const ratio = Math.min(1, Math.max(0, sdiRank / maxRank));
           return (1 - Math.sqrt(ratio)) * 100;
         } else {
-          const maxRank = row.rank_type === 'Category_Rank' ? finalMaxMain_Cat : finalMaxMain_CRL;
-          const ratio = Math.min(1, Math.max(0, closingLatestForSDI / maxRank));
+          const maxRank = finalMaxMain_CRL;
+          const ratio = Math.min(1, Math.max(0, sdiRank / maxRank));
           return (1 - Math.sqrt(ratio)) * 100;
         }
       })();
@@ -379,11 +401,29 @@ export default function App() {
       });
     }
 
+    // Filter out CSAB predictions if the corresponding JoSAA prediction is already obtainable
+    const josaaKeys = new Set<string>();
+    for (const pred of predictions) {
+      if (pred.counselling_board === 'JoSAA') {
+        const key = `${pred.institute_id}-${pred.program_id}-${pred.quota}-${pred.category}-${pred.gender}-${pred.rank_type}`;
+        josaaKeys.add(key);
+      }
+    }
+    const filteredPredictionsList = predictions.filter(pred => {
+      if (pred.counselling_board === 'CSAB') {
+        const key = `${pred.institute_id}-${pred.program_id}-${pred.quota}-${pred.category}-${pred.gender}-${pred.rank_type}`;
+        if (josaaKeys.has(key)) {
+          return false;
+        }
+      }
+      return true;
+    });
+
     // 5. Best Pathway Deduplication & Home State Dual-Quota Selection
-    // If a candidate matches both HS and OS quotas, or OPEN and Category seats,
+    // If a candidate matches both Home State and Other State quotas, or OPEN and Category seats,
     // we choose the seat quota and category offering the higher admission probability (higher probValue)
     const bestQuotaMap = new Map<string, Prediction>();
-    for (const pred of predictions) {
+    for (const pred of filteredPredictionsList) {
       const groupKey = `${pred.counselling_board}-${pred.institute_id}-${pred.program_id}-${pred.gender}`;
       const existing = bestQuotaMap.get(groupKey);
       if (!existing) {
@@ -472,7 +512,7 @@ export default function App() {
   }, []);
 
   // Determine if category is reserved
-  const isReservedCategory = category !== 'OPEN';
+  const isReservedCategory = category !== '' && category !== 'OPEN';
 
   // Toggle wishlist item
   const toggleWishlist = (key: string) => {
@@ -495,6 +535,21 @@ export default function App() {
 
     if (!homeState) {
       alert("Please select your Home State / UT.");
+      return;
+    }
+
+    if (!category) {
+      alert("Please select your Seat Category.");
+      return;
+    }
+
+    if (!gender) {
+      alert("Please select your Gender Pool.");
+      return;
+    }
+
+    if (!predictionMode) {
+      alert("Please select a Prediction Basis.");
       return;
     }
 
@@ -523,7 +578,15 @@ export default function App() {
         i.type as institute_type,
         c.program_id,
         p.name as program_name,
-        c.quota,
+        CASE
+          WHEN c.quota IN ('HS', 'Home State', 'Home State for Goa') THEN 'Home State'
+          WHEN c.quota IN ('OS', 'Other State') THEN 'Other State'
+          WHEN c.quota IN ('AI', 'All India') THEN 'All India'
+          WHEN c.quota IN ('JK', 'Jammu & Kashmir (UT)') THEN 'Jammu & Kashmir (UT)'
+          WHEN c.quota IN ('LA', 'Ladakh (UT)') THEN 'Ladakh (UT)'
+          WHEN c.quota = 'GO' THEN 'Goa'
+          ELSE c.quota
+        END as quota,
         c.category,
         c.gender,
         c.rank_type,
@@ -547,7 +610,17 @@ export default function App() {
         -- Exclude B.Arch (AAT / Paper-2) and B.Planning (Paper-2) programs
         AND p.name NOT LIKE '%Bachelor of Architecture%'
         AND p.name NOT LIKE '%Bachelor of Planning%'
-      GROUP BY c.counselling_board, c.institute_id, c.program_id, c.quota, c.category, c.gender, c.rank_type
+      GROUP BY c.counselling_board, c.institute_id, c.program_id,
+        CASE
+          WHEN c.quota IN ('HS', 'Home State', 'Home State for Goa') THEN 'Home State'
+          WHEN c.quota IN ('OS', 'Other State') THEN 'Other State'
+          WHEN c.quota IN ('AI', 'All India') THEN 'All India'
+          WHEN c.quota IN ('JK', 'Jammu & Kashmir (UT)') THEN 'Jammu & Kashmir (UT)'
+          WHEN c.quota IN ('LA', 'Ladakh (UT)') THEN 'Ladakh (UT)'
+          WHEN c.quota = 'GO' THEN 'Goa'
+          ELSE c.quota
+        END,
+        c.category, c.gender, c.rank_type
     `;
 
     workerRef.current.postMessage({
@@ -796,6 +869,7 @@ export default function App() {
                         onChange={(e) => setCategory(e.target.value)}
                         className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500 appearance-none text-slate-800 dark:text-slate-100 font-medium"
                       >
+                        <option value="">-- Select Category --</option>
                         {CATEGORIES_LIST.map(cat => (
                           <option key={cat} value={cat}>{cat}</option>
                         ))}
@@ -815,6 +889,7 @@ export default function App() {
                         onChange={(e) => setGender(e.target.value)}
                         className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500 appearance-none text-slate-800 dark:text-slate-100 font-medium"
                       >
+                        <option value="">-- Select Gender --</option>
                         <option value="Gender-Neutral">Gender-Neutral</option>
                         <option value="Female-only (including Supernumerary)">Female-only</option>
                       </select>
@@ -1272,27 +1347,40 @@ export default function App() {
                              <div className="relative group inline-flex items-center">
                               <span className="inline-flex items-center text-[10px] sm:text-xs font-bold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-lg">
                                 {pred.institute_type === 'IIT' || pred.institute_type === 'IISc' ? 'IIT Desirability' : 'Mains Desirability'}: {pred.sdi.toFixed(1)}/100
-                                <HelpCircle className="h-3 w-3 ml-1.5 text-indigo-500 group-hover:text-indigo-600 dark:text-indigo-400 cursor-pointer" />
+                                <HelpCircle
+                                  className="h-3 w-3 ml-1.5 text-indigo-500 group-hover:text-indigo-600 dark:text-indigo-400 cursor-pointer"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveTooltipKey(activeTooltipKey === pred.uniqueKey ? null : pred.uniqueKey);
+                                  }}
+                                />
                               </span>
                               
-                              {/* Hover Tooltip Box */}
-                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-slate-950 dark:bg-slate-900 text-white text-[10px] rounded-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-205 z-50 shadow-xl border border-slate-800 pointer-events-none">
+                              {/* Hover/Click Tooltip Box */}
+                              <div className={`fixed bottom-4 left-4 right-4 max-w-sm mx-auto mb-0 w-auto translate-x-0 sm:max-w-none sm:absolute sm:bottom-full sm:left-1/2 sm:-translate-x-1/2 sm:mb-2 sm:w-64 p-3 bg-slate-950 dark:bg-slate-900 text-white text-[10px] rounded-xl z-50 shadow-xl border border-slate-800 transition-all duration-205 ${
+                                activeTooltipKey === pred.uniqueKey
+                                  ? 'opacity-100 visible pointer-events-auto'
+                                  : 'opacity-0 invisible sm:group-hover:opacity-100 sm:group-hover:visible pointer-events-none'
+                              }`}>
                                 <div className="font-bold border-b border-slate-800 pb-1 mb-1.5 text-[11px] text-indigo-400">
-                                  Dynamic Desirability Score
+                                  Desirability Score
                                 </div>
                                 <div className="space-y-1.5 leading-relaxed text-slate-300 font-medium">
-                                  <div>Normalized purely out of 100 from the latest year's JoSAA/IIT data:</div>
+                                  <div>An objective desirability rating (out of 100) calculated from the latest year's JoSAA OPEN category CRL cutoff for the branch:</div>
                                   <div className="font-mono bg-slate-900 dark:bg-slate-950 p-1.5 rounded text-center text-indigo-300 text-[10px] font-semibold border border-slate-800">
-                                    Score = (1 - sqrt(Cutoff / Max)) * 100
+                                    Score = (1 - sqrt(OPEN_CRL / Max_OPEN_CRL)) * 100
                                   </div>
                                   <div>
-                                    • <strong className="text-slate-200">Quota Neutral</strong>: Calculated using the best cutoff across HS & OS quotas so regional benefits don't lower the college's prestige.
+                                    • <strong className="text-slate-200">Exam Decoupled</strong>: Calculated separately for IITs (Advanced) and NITs/IIITs/GFTIs (Mains) using their respective maximum ranks.
                                   </div>
                                   <div>
-                                    • <strong className="text-slate-200">Category Calibrated</strong>: Normalized against category-specific maximum closing ranks, ensuring proper score distribution.
+                                    • <strong className="text-slate-200">Quota Neutral</strong>: Uses the best cutoff across Home State & Other State quotas so regional benefits don't skew the rating.
+                                  </div>
+                                  <div>
+                                    • <strong className="text-slate-200">Category Agnostic</strong>: Uses the OPEN category cutoff so all category seats of a branch inherit the same rating, keeping branch rankings consistent.
                                   </div>
                                 </div>
-                                <div className="w-2.5 h-2.5 bg-slate-950 dark:bg-slate-900 border-r border-b border-slate-800 absolute top-full left-1/2 -translate-x-1/2 -translate-y-1.5 rotate-45"></div>
+                                <div className="hidden sm:block w-2.5 h-2.5 bg-slate-950 dark:bg-slate-900 border-r border-b border-slate-800 absolute top-full left-1/2 -translate-x-1/2 -translate-y-1.5 rotate-45"></div>
                               </div>
                             </div>
                           </div>
@@ -1435,9 +1523,9 @@ export default function App() {
                 </p>
               </div>
               <div className="max-w-md space-y-1">
-                <span className="font-bold text-slate-700 dark:text-slate-300">What is SDI (Smart Desirability Index)?</span>
+                <span className="font-bold text-slate-700 dark:text-slate-300">What is the Desirability Score?</span>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-normal">
-                  A desirability score (out of 100) calculated using normalized base competitiveness derived from JEE Advanced (for IITs) or JoSAA closing ranks (for Mains). The scale is dynamically determined by category-specific max closing ranks to prevent score squishing. Quotas are objective-normalized to keep scores consistent. Ranks are sorted in descending order of this index to prioritize the most competitive options.
+                  An objective rating (out of 100) calculated using the normalized base competitiveness of the JoSAA OPEN category CRL cutoff for the branch. All category seats of a branch inherit the same OPEN-based score, ensuring consistent sorting so the actual best seats rank at the top regardless of entry pathway. The scale is dynamically determined by OPEN CRL max ranks, objective-normalized, and decoupled between exam types.
                 </p>
               </div>
             </div>
