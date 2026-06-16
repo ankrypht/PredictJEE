@@ -39,7 +39,7 @@
       <h1 class="text-3xl font-extrabold tracking-tight text-white flex items-center gap-2">
         Terms &amp; Conditions
       </h1>
-      <p class="text-slate-400 text-sm">Last updated: June 2026</p>
+      <p class="text-slate-400 text-sm">Last updated: {{last_updated}}</p>
     </header>
 
     <!-- Content Card -->
@@ -58,10 +58,10 @@
           All college allocation success probabilities, status ratings (High/Medium/Low Probability), and Closing Ranks (WCR/SDI) calculated by this platform are <strong>strictly indicative</strong>. 
         </p>
         <p>
-          These calculations are generated using historical cutoff data from official JoSAA and CSAB counselling rounds (years 2023, 2024, and 2025). **Past performance is not a guarantee of future outcomes.** 
+          These calculations are generated using historical cutoff data from official JoSAA and CSAB counselling rounds (years {{historical_years}}). **Past performance is not a guarantee of future outcomes.** 
         </p>
         <p>
-          Actual cutoffs for the 2026 counselling rounds may deviate significantly due to factors outside this tool's control, including but not limited to:
+          Actual cutoffs for the {{counselling_year}} counselling rounds may deviate significantly due to factors outside this tool's control, including but not limited to:
         </p>
         <ul class="list-disc pl-5 space-y-1 text-slate-400">
           <li>Fluctuations in the total number of registered candidates.</li>
@@ -125,7 +125,7 @@
 
   <!-- Footer -->
   <footer class="border-t border-slate-900 bg-slate-950 py-4 text-center text-xs text-slate-600">
-    <p>&copy; 2026 JEE Predictor. Created by Ankush.</p>
+    <p>&copy; {{counselling_year}} JEE Predictor. Created by Ankush.</p>
   </footer>
 
 </body>

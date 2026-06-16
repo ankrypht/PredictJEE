@@ -262,7 +262,7 @@ export const SidebarForm: React.FC<SidebarFormProps> = ({
             className="mt-1 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 dark:border-slate-800 dark:bg-slate-950 accent-brand-500 cursor-pointer"
           />
           <label htmlFor="agreeTerms" className="text-[10px] sm:text-[11px] leading-snug text-slate-500 dark:text-slate-400 select-none cursor-pointer">
-            I understand this is an indicative predictor based on past counselling cutoffs, and actual 2026 cutoffs may differ. I agree to the <a href="./terms.html" target="_blank" rel="noopener noreferrer" className="text-brand-600 dark:text-brand-400 font-semibold hover:underline">Terms &amp; Conditions</a>.
+            I understand this is an indicative predictor based on past counselling cutoffs, and actual {latestYear + 1} cutoffs may differ. I agree to the <a href="./terms.html" target="_blank" rel="noopener noreferrer" className="text-brand-600 dark:text-brand-400 font-semibold hover:underline">Terms &amp; Conditions</a>.
           </label>
         </div>
 

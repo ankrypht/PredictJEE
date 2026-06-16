@@ -28,5 +28,6 @@ dist-ssr
 /cutoffs.db.bak
 .gemini/
 
-# Local utility and test scripts
-/scripts/
+# Python scripts cache
+scripts/__pycache__/
+*.pyc

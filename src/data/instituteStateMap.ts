@@ -1,6 +1,6 @@
 export interface InstituteInfo {
   name: string;
-  type: 'IIT' | 'NIT' | 'IIIT' | 'GFTI' | 'SFTI';
+  type: 'IIT' | 'NIT' | 'IIIT' | 'GFTI' | 'SFTI' | 'IISc';
   state: string;
 }
 

@@ -12,13 +12,14 @@ import { SidebarForm } from './components/SidebarForm';
 import { Filters } from './components/Filters';
 import { PredictionCard } from './components/PredictionCard';
 import { INSTITUTE_STATE_MAP } from './data/instituteStateMap';
+import { DB_METADATA } from './data/dbMetadata';
 
 export default function App() {
   // Database State (Managed off-thread via Web Worker)
   const [dbProgress, setDbProgress] = useState<number>(0);
   const [dbLoaded, setDbLoaded] = useState<boolean>(false);
   const [dbError, setDbError] = useState<string | null>(null);
-  const [latestYear, setLatestYear] = useState<number>(2025);
+  const [latestYear, setLatestYear] = useState<number>(DB_METADATA.latestYear);
   const [isQuerying, setIsQuerying] = useState<boolean>(false);
   const workerRef = useRef<Worker | null>(null);
 

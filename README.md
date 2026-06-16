@@ -70,6 +70,40 @@ To prevent data anomalies and rare quota distributions (such as North-Eastern ho
 
 ---
 
+## 🔄 Database Update & Auto-Mapping Workflow
+
+The website is fully dynamic. When a new counselling session begins and a new database with updated cutoffs is loaded, the year configurations and state mapping dependencies are automatically resolved.
+
+### Database Setup & Mapping Compilation
+
+The repository includes a Python utility to automate mapping compilation, database metadata creation, and legal terms updates.
+
+#### 1. Place the Database
+Overwrite `cutoffs.db` in the project root directory with the new SQLite database. The structure of the database must remain the same:
+- Table `institutes` (`id`, `name`, `type`)
+- Table `programs` (`id`, `name`)
+- Table `cutoffs` (`counselling_board`, `institute_id`, `program_id`, `quota`, `category`, `gender`, `rank_type`, `year`, `round_no`, `closing_rank`)
+
+#### 2. Run the Build Mapping Script
+Run the automated script to compile mappings and configurations:
+```bash
+python scripts/build_mapping.py
+```
+
+#### What this script does:
+1. **Dynamic Year Detection:** Automatically scans `cutoffs.db` to extract all unique years, sets the default `latestYear` React state to the maximum database year, and calculates the next counselling year (`latestYear + 1`).
+2. **State & Location Resolution:** Maps each institute to its home state using:
+   - Preserved manual state overrides.
+   - Text heuristics matching state names inside the institute title.
+   - City keyword matches (e.g., "Rourkela" -> "Odisha").
+3. **Interactive Overrides (Fallback):** If a new or renamed institute is found and cannot be resolved automatically, the script pauses and prompts the operator in the terminal with a numbered menu of the 36 Indian States and UTs. Once selected, it appends the override to [manual_state_overrides.json](scripts/manual_state_overrides.json) so the operator is never prompted for that institute again.
+4. **Compile Configs & Templates:**
+   - Generates [instituteStateMap.ts](src/data/instituteStateMap.ts).
+   - Generates [dbMetadata.ts](src/data/dbMetadata.ts).
+   - Compiles [terms.html](public/terms.html) from [terms.template.html](public/terms.template.html), substituting placeholders for history years, counselling year, and the "Last updated" month/year.
+
+---
+
 ## ⚖️ Disclaimers & Licensing
 
 All cutoffs are indicative parameters based on JoSAA/CSAB historical counselling rounds. Actual cutoffs may vary. Open sourced under the **MIT License**.
