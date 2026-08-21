@@ -31,3 +31,6 @@ dist-ssr
 # Python scripts cache
 scripts/__pycache__/
 *.pyc
+.python-version
+pyproject.toml
+uv.lock
