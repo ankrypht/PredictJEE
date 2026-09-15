@@ -7,29 +7,39 @@
     "dev": "vite --host",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "scrape": "tsx scraper/scraper.ts",
+    "scrape:josaa": "tsx scraper/debug_josaa.ts",
+    "scrape:csab": "tsx scraper/debug_csab.ts",
+    "build:mapping": "python3 scripts/build_mapping.py",
+    "update:db": "npm run scrape && npm run build:mapping"
   },
   "dependencies": {
-    "lucide-react": "^1.33.0",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "lucide-react": "^1.46.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@tailwindcss/postcss": "^4.3.3",
-    "@types/node": "^26.2.0",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
-    "@vitejs/plugin-react": "^6.1.0",
-    "autoprefixer": "^10.5.4",
-    "eslint": "^10.8.1",
+    "@types/node": "^26.6.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/sqlite3": "^3.1.11",
+    "@vitejs/plugin-react": "^6.1.1",
+    "autoprefixer": "^10.6.1",
+    "eslint": "^10.10.0",
     "eslint-plugin-react-hooks": "^7.1.1",
-    "eslint-plugin-react-refresh": "^0.5.4",
-    "globals": "^17.11.0",
-    "postcss": "^8.5.26",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.12.0",
+    "playwright": "^1.63.0",
+    "postcss": "^8.5.28",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^6.0.1",
     "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.13",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.67.0",
-    "vite": "^8.2.2"
+    "typescript-eslint": "^8.70.0",
+    "vite": "^8.3.0"
   }
 }

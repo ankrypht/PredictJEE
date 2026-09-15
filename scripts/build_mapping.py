@@ -1,16 +1,20 @@
 import sqlite3
 import json
 import os
+import re
+import shutil
 from datetime import datetime
 
 # Resolve absolute paths relative to script location
 script_dir = os.path.dirname(os.path.abspath(__file__))
 db_path = os.path.join(script_dir, '..', 'cutoffs.db')
+public_db_path = os.path.join(script_dir, '..', 'public', 'cutoffs.db')
 overrides_path = os.path.join(script_dir, 'manual_state_overrides.json')
 ts_output_path = os.path.join(script_dir, '..', 'src', 'data', 'instituteStateMap.ts')
 meta_output_path = os.path.join(script_dir, '..', 'src', 'data', 'dbMetadata.ts')
 terms_template_path = os.path.join(script_dir, '..', 'public', 'terms.template.html')
 terms_output_path = os.path.join(script_dir, '..', 'public', 'terms.html')
+json_output_path = os.path.join(script_dir, '..', 'institute_state_map.json')
 
 # 1. Connect to cutoffs.db
 if not os.path.exists(db_path):
@@ -26,9 +30,9 @@ try:
     all_years = [r[0] for r in years_rows if r[0] is not None]
 except Exception as e:
     print(f"Error reading years from database: {e}")
-    all_years = [2025, 2024, 2023] # fallback
+    all_years = [2026, 2025, 2024]
 
-latest_year = all_years[0] if all_years else 2025
+latest_year = all_years[0] if all_years else 2026
 counselling_year = latest_year + 1
 
 print(f"Database contains years: {all_years}")
@@ -52,9 +56,49 @@ states_list = [
     "Delhi", "Chandigarh", "Jammu & Kashmir", "Puducherry", "Dadra and Nagar Haveli and Daman and Diu",
     "Ladakh", "Lakshadweep", "Andaman and Nicobar Islands"
 ]
-states_list.sort() # Ensure sorted order
+states_list.sort()
 
-# Load overrides
+# Comprehensive city / hub keyword mapping with regex word boundaries
+city_map_patterns = [
+    (r'\b(diu|daman)\b', 'Dadra and Nagar Haveli and Daman and Diu'),
+    (r'\b(delhi|new delhi)\b', 'Delhi'),
+    (r'\bchandigarh\b', 'Chandigarh'),
+    (r'\b(pondicherry|puducherry)\b', 'Puducherry'),
+    (r'\b(leh|ladakh)\b', 'Ladakh'),
+    (r'\b(visakhapatnam|vizag|tirupati|kurnool|chittoor|sri city|vijayawada)\b', 'Andhra Pradesh'),
+    (r'\b(itanagar|nirjuli)\b', 'Arunachal Pradesh'),
+    (r'\b(silchar|guwahati|tezpur|kokrajar)\b', 'Assam'),
+    (r'\b(patna|bhagalpur)\b', 'Bihar'),
+    (r'\b(raipur|bilaspur|bhilai|naya raipur)\b', 'Chhattisgarh'),
+    (r'\bgoa\b', 'Goa'),
+    (r'\b(surat|vadodara|gandhinagar|ahmedabad)\b', 'Gujarat'),
+    (r'\b(kundli|sonepat|kurukshetra|kilohrad)\b', 'Haryana'),
+    (r'\b(mandi|hamirpur|una)\b', 'Himachal Pradesh'),
+    (r'\b(srinagar|jammu|katra|kashmir)\b', 'Jammu & Kashmir'),
+    (r'\b(ranchi|dhanbad|jamshedpur|deoghar)\b', 'Jharkhand'),
+    (r'\b(surathkal|dharwad|manipal|raichur|bangalore|bengaluru)\b', 'Karnataka'),
+    (r'\b(calicut|kottayam|palakkad)\b', 'Kerala'),
+    (r'\b(bhopal|indore|gwalior|jabalpur|sagar)\b', 'Madhya Pradesh'),
+    (r'\b(bombay|nagpur|pune|aurangabad|mumbai)\b', 'Maharashtra'),
+    (r'\b(imphal|senapati)\b', 'Manipur'),
+    (r'\bshillong\b', 'Meghalaya'),
+    (r'\baizawl\b', 'Mizoram'),
+    (r'\bkohima\b', 'Nagaland'),
+    (r'\b(rourkela|bhubaneswar)\b', 'Odisha'),
+    (r'\b(jalandhar|ropar|bathinda|longowal)\b', 'Punjab'),
+    (r'\b(jaipur|jodhpur|kota|ajmer)\b', 'Rajasthan'),
+    (r'\bgangtok\b', 'Sikkim'),
+    (r'\b(trichy|tiruchirappalli|madras|salem|kancheepuram|thanjavur|chennai)\b', 'Tamil Nadu'),
+    (r'\b(warangal|hyderabad)\b', 'Telangana'),
+    (r'\bagartala\b', 'Tripura'),
+    (r'\b(allahabad|varanasi|amethi|lucknow|gorakhpur|kanpur|noida|greater noida|bhadohi|fursatganj)\b', 'Uttar Pradesh'),
+    (r'\b(roorkee|haridwar)\b', 'Uttarakhand'),
+    (r'\b(durgapur|shibpur|malda|kolkata|kharagpur|kalyani)\b', 'West Bengal'),
+]
+
+compiled_cities = [(re.compile(p, re.IGNORECASE), st) for p, st in city_map_patterns]
+
+# Load overrides (now keyed by institute name)
 manual_overrides = {}
 if os.path.exists(overrides_path):
     with open(overrides_path, 'r', encoding='utf-8') as f:
@@ -62,70 +106,44 @@ if os.path.exists(overrides_path):
 else:
     print(f"Warning: Overrides file not found at {overrides_path}. Starting fresh.")
 
+# Build case-insensitive override map for robust matching
+overrides_lookup = {k.strip().lower(): v for k, v in manual_overrides.items()}
+
 overrides_changed = False
 results = {}
 
 for inst_id, name, inst_type in insts:
     state = None
-    inst_id_str = str(inst_id)
-    
-    # 1. Check overrides
-    if inst_id_str in manual_overrides:
-        state = manual_overrides[inst_id_str]
-    else:
-        # 2. State Name in Institute Name
-        for s in states_list:
-            if s.lower() in name.lower():
+    clean_name = re.sub(r'\s+', ' ', name).strip()
+    clean_name_lower = clean_name.lower()
+
+    # 1. Check manual overrides (by institute name)
+    if clean_name_lower in overrides_lookup:
+        state = overrides_lookup[clean_name_lower]
+
+    # 2. Check special UT locations (e.g. Diu Campus before Vadodara matches Gujarat)
+    if not state and re.search(r'\b(diu|daman)\b', clean_name, re.IGNORECASE):
+        state = 'Dadra and Nagar Haveli and Daman and Diu'
+
+    # 3. Check State / UT names with word boundaries (longest names first)
+    if not state:
+        for s in sorted(states_list, key=len, reverse=True):
+            if re.search(rf'\b{re.escape(s)}\b', clean_name, re.IGNORECASE):
                 state = s
                 break
-                
-        # 3. Fallbacks based on common names/cities
-        if not state:
-            name_lower = name.lower()
-            if "delhi" in name_lower:
-                state = "Delhi"
-            elif "pondicherry" in name_lower or "puducherry" in name_lower:
-                state = "Puducherry"
-            elif any(x in name_lower for x in ["allahabad", "varanasi", "amethi", "lucknow", "gorakhpur", "kanpur", "noida", "greater noida"]):
-                state = "Uttar Pradesh"
-            elif any(x in name_lower for x in ["rourkela", "bhubaneswar"]):
-                state = "Odisha"
-            elif any(x in name_lower for x in ["silchar", "guwahati", "tezpur"]):
-                state = "Assam"
-            elif any(x in name_lower for x in ["surathkal", "dharwad", "manipal", "raichur"]):
-                state = "Karnataka"
-            elif any(x in name_lower for x in ["ranchi", "dhanbad", "jamshedpur", "deoghar"]):
-                state = "Jharkhand"
-            elif any(x in name_lower for x in ["trichy", "tiruchirappalli", "madras", "salem", "kancheepuram"]):
-                state = "Tamil Nadu"
-            elif any(x in name_lower for x in ["warangal", "hyderabad"]):
-                state = "Telangana"
-            elif any(x in name_lower for x in ["bhopal", "indore", "gwalior", "jabalpur", "sagar"]):
-                state = "Madhya Pradesh"
-            elif any(x in name_lower for x in ["surat", "vadodara", "gandhinagar"]):
-                state = "Gujarat"
-            elif "roorkee" in name_lower:
-                state = "Uttarakhand"
-            elif any(x in name_lower for x in ["bombay", "nagpur", "pune"]):
-                state = "Maharashtra"
-            elif any(x in name_lower for x in ["patna", "bhagalpur"]):
-                state = "Bihar"
-            elif any(x in name_lower for x in ["calicut", "kottayam", "palakkad"]):
-                state = "Kerala"
-            elif "srinagar" in name_lower:
-                state = "Jammu & Kashmir"
-            elif any(x in name_lower for x in ["jalandhar", "ropar"]):
-                state = "Punjab"
-            elif any(x in name_lower for x in ["jaipur", "jodhpur", "kota", "ajmer"]):
-                state = "Rajasthan"
-            elif any(x in name_lower for x in ["raipur", "bilaspur", "bhilai"]):
-                state = "Chhattisgarh"
 
-    # 4. Prompt if state is not found
+    # 4. Check city / hub patterns with word boundaries
+    if not state:
+        for pattern, st in compiled_cities:
+            if pattern.search(clean_name):
+                state = st
+                break
+
+    # 5. Fallback: Prompt operator if state is still not found
     if not state:
         print(f"\n--- State mapping needed for new/unmapped institute ---")
         print(f"ID: {inst_id}")
-        print(f"Name: {name}")
+        print(f"Name: {clean_name}")
         print(f"Type: {inst_type}")
         print("Available States/UTs:")
         for idx, s in enumerate(states_list, 1):
@@ -140,9 +158,10 @@ for inst_id, name, inst_type in insts:
                 num = int(choice)
                 if 1 <= num <= len(states_list):
                     state = states_list[num - 1]
-                    manual_overrides[inst_id_str] = state
+                    manual_overrides[clean_name] = state
+                    overrides_lookup[clean_name_lower] = state
                     overrides_changed = True
-                    print(f"Mapped to {state} and saved to memory.")
+                    print(f"Mapped '{clean_name}' to {state} and saved override.")
                     break
             except ValueError:
                 pass
@@ -150,17 +169,27 @@ for inst_id, name, inst_type in insts:
 
     if state:
         results[inst_id] = {
-            "name": name,
+            "name": clean_name,
             "type": inst_type,
             "state": state
         }
+    else:
+        print(f"WARNING: Institute {inst_id} ({clean_name}) remains unmapped!")
 
 # Save overrides if updated
 if overrides_changed:
-    sorted_overrides = {k: manual_overrides[k] for k in sorted(manual_overrides.keys(), key=int)}
+    sorted_overrides = {k: manual_overrides[k] for k in sorted(manual_overrides.keys())}
     with open(overrides_path, 'w', encoding='utf-8') as f:
         json.dump(sorted_overrides, f, indent=2)
     print(f"Saved {len(sorted_overrides)} overrides to {overrides_path}")
+
+# Synchronize cutoffs.db to public/cutoffs.db for frontend SQL.js Web Worker
+try:
+    os.makedirs(os.path.dirname(public_db_path), exist_ok=True)
+    shutil.copy2(db_path, public_db_path)
+    print(f"Successfully mirrored {db_path} to {public_db_path}")
+except Exception as e:
+    print(f"Warning: Could not copy database to {public_db_path}: {e}")
 
 # Generate instituteStateMap.ts
 os.makedirs(os.path.dirname(ts_output_path), exist_ok=True)
@@ -185,7 +214,20 @@ ts_content += "};\n"
 
 with open(ts_output_path, 'w', encoding='utf-8') as f:
     f.write(ts_content)
-print(f"Successfully generated {ts_output_path}")
+print(f"Successfully generated {ts_output_path} ({len(results)} institutes mapped)")
+
+# Generate institute_state_map.json in root
+json_map = {
+    str(inst_id): {
+        "name": info['name'],
+        "type": info['type'],
+        "state": info['state']
+    }
+    for inst_id, info in sorted(results.items())
+}
+with open(json_output_path, 'w', encoding='utf-8') as f:
+    json.dump(json_map, f, indent=2)
+print(f"Successfully updated {json_output_path}")
 
 # Generate dbMetadata.ts
 meta_content = f"""// Auto-generated by build_mapping.py. Do not edit manually.
@@ -205,7 +247,6 @@ if os.path.exists(terms_template_path):
     with open(terms_template_path, 'r', encoding='utf-8') as f:
         terms_tpl = f.read()
     
-    # Construct historical years string (e.g. 2023, 2024, and 2025)
     sorted_years = sorted(all_years)
     if len(sorted_years) == 0:
         years_str = ""
